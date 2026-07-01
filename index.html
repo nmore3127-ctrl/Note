@@ -178,7 +178,7 @@
     </div>
   </div>
 
-  <footer>Links open with fb:// deep links — tap on mobile to jump straight into the Facebook app.</footer>
+  <footer>Links use Android intent:// URLs to open each Reel directly in Facebook Lite, with a browser fallback if it's not installed.</footer>
 </div>
 
 <script>
@@ -190,15 +190,33 @@
   const listContainer = document.getElementById('listContainer');
   const statusMsg = document.getElementById('statusMsg');
 
-  // Build a native Facebook app deep link from a normal web URL
-  function toFacebookDeepLink(url){
-    // Ensure the URL has a protocol so it resolves correctly when encoded
+  // Normalize a raw string into a proper https:// web URL
+  function toCleanWebUrl(url){
     let clean = url.trim();
     if(!/^https?:\/\//i.test(clean)){
       clean = 'https://' + clean.replace(/^\/\//,'');
     }
-    const encoded = encodeURIComponent(clean);
-    return 'fb://facewebmodal/f?href=' + encoded;
+    return clean;
+  }
+
+  // Build an Android intent:// deep link that forces the link to open
+  // inside the Facebook Lite app (com.facebook.lite) for that specific
+  // Reel/Post, falling back to the normal web URL if Lite isn't installed.
+  function toFacebookLiteIntentLink(url){
+    const webUrl = toCleanWebUrl(url);
+    let hostAndPath;
+    try{
+      const u = new URL(webUrl);
+      // intent:// expects the scheme stripped off, e.g. facebook.com/share/r/XXXX
+      hostAndPath = u.host + u.pathname + u.search;
+    }catch(e){
+      // If parsing fails, strip the protocol manually as a fallback
+      hostAndPath = webUrl.replace(/^https?:\/\//i, '');
+    }
+    const fallback = encodeURIComponent(webUrl);
+    return 'intent://' + hostAndPath +
+      '#Intent;package=com.facebook.lite;scheme=https;' +
+      'S.browser_fallback_url=' + fallback + ';end';
   }
 
   function parseInputToUrls(raw){
@@ -217,12 +235,12 @@
     urls.forEach(url => {
       const li = document.createElement('li');
       const a = document.createElement('a');
-      a.href = toFacebookDeepLink(url);
+      a.href = toFacebookLiteIntentLink(url);
       a.textContent = url;
       a.rel = 'noopener noreferrer';
-      // Fallback: if fb:// fails to open the app after a short delay,
-      // some mobile browsers just do nothing; provide the raw web link as a data attribute
-      a.dataset.webUrl = /^https?:\/\//i.test(url) ? url : 'https://' + url.replace(/^\/\//,'');
+      // Keep the plain web URL handy too (used as the intent's own fallback,
+      // and available here in case you want a manual "open in browser" option)
+      a.dataset.webUrl = toCleanWebUrl(url);
       li.appendChild(a);
       ol.appendChild(li);
     });
