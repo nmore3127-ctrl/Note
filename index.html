@@ -96,6 +96,17 @@
     color:#fff;
   }
   #saveBtn:hover{ background:var(--accent-hover); }
+  #pasteBtn{
+    background:var(--panel-2);
+    color:var(--text);
+    border:1px solid var(--border);
+    flex:0 0 auto;
+    min-width:170px;
+  }
+  #pasteBtn:hover{
+    border-color:var(--accent);
+    color:var(--accent-hover);
+  }
   #clearBtn{
     background:transparent;
     color:var(--danger);
@@ -207,6 +218,7 @@
   <div class="card">
     <textarea id="inputArea" placeholder="Paste URLs separated by commas, e.g.&#10;https://www.facebook.com/reel/123456, https://www.facebook.com/reel/789012"></textarea>
     <div class="btn-row">
+      <button id="pasteBtn" type="button">📋 Paste from Clipboard</button>
       <button id="saveBtn">Format &amp; Save</button>
       <button id="clearBtn">Clear All</button>
     </div>
@@ -230,6 +242,7 @@
 (function(){
   const STORAGE_KEY = 'reelsNotepad.savedUrls';
   const inputArea = document.getElementById('inputArea');
+  const pasteBtn = document.getElementById('pasteBtn');
   const saveBtn = document.getElementById('saveBtn');
   const clearBtn = document.getElementById('clearBtn');
   const copyBtn = document.getElementById('copyBtn');
@@ -369,6 +382,28 @@
       }, 3000);
     }
   }
+
+  pasteBtn.addEventListener('click', async () => {
+    if(!navigator.clipboard || !navigator.clipboard.readText){
+      showStatus('Clipboard access is not supported in this browser.', true);
+      return;
+    }
+    try{
+      // This will prompt the user for clipboard-read permission on first use
+      // in most mobile browsers (requires a secure context: HTTPS or localhost).
+      const text = await navigator.clipboard.readText();
+      if(!text || !text.trim()){
+        showStatus('Clipboard is empty.', true);
+        return;
+      }
+      inputArea.value = text;
+      inputArea.focus();
+      showStatus('Pasted from clipboard.', false);
+    }catch(e){
+      console.error('Clipboard read failed', e);
+      showStatus('Clipboard permission denied or unavailable.', true);
+    }
+  });
 
   saveBtn.addEventListener('click', () => {
     const raw = inputArea.value;
