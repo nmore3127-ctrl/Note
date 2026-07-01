@@ -383,27 +383,56 @@
     }
   }
 
-  pasteBtn.addEventListener('click', async () => {
-    if(!navigator.clipboard || !navigator.clipboard.readText){
-      showStatus('Clipboard access is not supported in this browser.', true);
+  // Attempts to paste clipboard content into the textarea using multiple
+  // strategies, since navigator.clipboard.readText() frequently throws
+  // permission errors inside Android WebViews (no Permissions API / no
+  // secure-context clipboard-read grant available to the embedded page).
+  async function pasteFromClipboard(){
+    // Strategy 1: modern async Clipboard API (works in real Chrome/Edge/etc,
+    // and in WebViews where the host app has granted clipboard access).
+    if(navigator.clipboard && navigator.clipboard.readText){
+      try{
+        const text = await navigator.clipboard.readText();
+        if(text && text.trim()){
+          inputArea.value = text;
+          inputArea.focus();
+          showStatus('Pasted from clipboard.', false);
+          return;
+        }
+      }catch(e){
+        console.warn('navigator.clipboard.readText failed, trying fallback', e);
+        // fall through to strategy 2
+      }
+    }
+
+    // Strategy 2: legacy document.execCommand('paste'). This works in many
+    // Android System WebViews without ever hitting the browser Permissions
+    // API, because it goes through the OS input connection directly instead
+    // of the web Clipboard permission model.
+    inputArea.value = '';
+    inputArea.focus();
+    let execSucceeded = false;
+    try{
+      execSucceeded = document.execCommand('paste');
+    }catch(e){
+      console.warn('document.execCommand("paste") failed', e);
+    }
+    if(execSucceeded && inputArea.value.trim()){
+      showStatus('Pasted from clipboard.', false);
       return;
     }
-    try{
-      // This will prompt the user for clipboard-read permission on first use
-      // in most mobile browsers (requires a secure context: HTTPS or localhost).
-      const text = await navigator.clipboard.readText();
-      if(!text || !text.trim()){
-        showStatus('Clipboard is empty.', true);
-        return;
-      }
-      inputArea.value = text;
-      inputArea.focus();
-      showStatus('Pasted from clipboard.', false);
-    }catch(e){
-      console.error('Clipboard read failed', e);
-      showStatus('Clipboard permission denied or unavailable.', true);
-    }
-  });
+
+    // Strategy 3: no programmatic path worked (this is expected on some
+    // hardened WebViews — JS is not allowed to silently read the clipboard
+    // for security reasons). Put the cursor in the textarea and select any
+    // existing content so a single tap brings up Android's native "Paste"
+    // popup, which the user can then tap themselves.
+    inputArea.focus();
+    inputArea.select();
+    showStatus('Tap inside the box and choose "Paste" from the popup.', true);
+  }
+
+  pasteBtn.addEventListener('click', pasteFromClipboard);
 
   saveBtn.addEventListener('click', () => {
     const raw = inputArea.value;
