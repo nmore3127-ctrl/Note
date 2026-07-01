@@ -218,7 +218,7 @@
       <button id="clearBtn">Clear All</button>
     </div>
     <div class="status" id="statusMsg"></div>
-    <div class="hint">Tip: tap inside the box, then use your keyboard's own "Paste" suggestion — no browser clipboard permission needed.</div>
+    <div class="hint">Tip: tap inside the box, then use your keyboard's own "Paste" suggestion — no browser clipboard permission needed. You can paste a plain comma-separated list, or paste a previously copied "Copy All Links" list back in and its click counts will be restored.</div>
   </div>
 
   <div class="card list-card">
@@ -272,23 +272,47 @@
       '#Intent;package=com.facebook.lite;scheme=https;end';
   }
 
-  function parseInputToUrls(raw){
-    return raw
-      .split(',')
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+  // Matches a URL (with or without protocol) optionally followed by an
+  // embedded click-count annotation in either of the formats produced by
+  // the "Copy All Links" button, e.g.:
+  //   "1. https://facebook.com/reel/123 - ক্লিক: 5 বার"
+  //   "1. https://facebook.com/reel/123 (ক্লিক: 5 বার)"
+  //   "1. https://facebook.com/reel/123 (Clicks: 5)"
+  // It also matches bare URLs separated only by commas or newlines with no
+  // click info at all, so raw pasted lists keep working exactly as before.
+  const URL_WITH_CLICKS_REGEX =
+    /((?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}(?:\/[^\s,()]*)?)\s*(?:[-(]\s*(?:ক্লিক|Clicks?)\s*[:：]?\s*(\d+)\s*(?:বার)?\)?)?/gi;
+
+  // Scans the raw textarea content for every URL it can find, along with an
+  // optional click count sitting right next to it. Works regardless of
+  // whether entries are separated by commas, newlines, or numbered lines.
+  function processLinks(raw){
+    const found = new Map(); // url -> parsedClicks (number) | null
+    let match;
+    URL_WITH_CLICKS_REGEX.lastIndex = 0;
+    while((match = URL_WITH_CLICKS_REGEX.exec(raw)) !== null){
+      let url = match[1].trim().replace(/[),.]+$/, '');
+      if(!url) continue;
+      const clicksStr = match[2];
+      const parsedClicks = clicksStr !== undefined ? parseInt(clicksStr, 10) : null;
+      found.set(url, (parsedClicks !== null && !isNaN(parsedClicks)) ? parsedClicks : null);
+    }
+    return Array.from(found.entries()).map(([url, parsedClicks]) => ({ url, parsedClicks }));
   }
 
-  // Merge freshly parsed URLs with any existing click/visited data so that
-  // re-formatting the same list doesn't reset counters.
-  function buildItemsFromUrls(urls, previousItems){
+  // Merge freshly parsed entries with any existing click/visited data.
+  // If the pasted text itself carried a click count (from a previously
+  // copied list), that count wins and is restored as-is. Otherwise, fall
+  // back to whatever count this URL already had in memory, or 0 if new.
+  function buildItemsFromParsed(parsedEntries, previousItems){
     const prevByUrl = new Map((previousItems || []).map(item => [item.url, item]));
-    return urls.map(url => {
+    return parsedEntries.map(({ url, parsedClicks }) => {
       const prev = prevByUrl.get(url);
+      const clicks = parsedClicks !== null ? parsedClicks : (prev ? prev.clicks : 0);
       return {
         url,
-        clicks: prev ? prev.clicks : 0,
-        visited: prev ? prev.visited : false
+        clicks,
+        visited: clicks > 0
       };
     });
   }
@@ -375,16 +399,20 @@
 
   saveBtn.addEventListener('click', () => {
     const raw = inputArea.value;
-    const urls = parseInputToUrls(raw);
-    if(urls.length === 0){
+    const parsedEntries = processLinks(raw);
+    if(parsedEntries.length === 0){
       showStatus('Please enter at least one URL first.', true);
       return;
     }
-    const items = buildItemsFromUrls(urls, currentItems);
+    const items = buildItemsFromParsed(parsedEntries, currentItems);
     const ok = saveItems(items);
     renderList(items);
+    const restoredCount = parsedEntries.filter(e => e.parsedClicks !== null).length;
     if(ok){
-      showStatus(`Saved ${items.length} link${items.length !== 1 ? 's' : ''}.`, false);
+      const restoredNote = restoredCount > 0
+        ? ` (restored click counts for ${restoredCount})`
+        : '';
+      showStatus(`Saved ${items.length} link${items.length !== 1 ? 's' : ''}${restoredNote}.`, false);
     }else{
       showStatus('Could not save to local storage.', true);
     }
