@@ -231,7 +231,7 @@
     </div>
   </div>
 
-  <footer>Links use Android intent:// URLs to open each Reel directly in Facebook Lite.</footer>
+  <footer>Links use Android intent:// URLs that follow your phone's "Open by default" app settings for web.facebook.com.</footer>
 </div>
 
 <script>
@@ -316,10 +316,14 @@
     }
   }
 
-  // Build an Android intent:// deep link that opens the link directly inside
-  // the Facebook Lite app (com.facebook.lite) for that specific Reel/Post.
-  // Format: intent://[CLEAN_URL]#Intent;package=com.facebook.lite;scheme=https;end
-  function toFacebookLiteIntentLink(url){
+  // Build an Android intent:// deep link WITHOUT a hardcoded package name.
+  // Format: intent://[CLEAN_URL]#Intent;scheme=https;end
+  // Omitting "package=com.facebook.lite" means Android resolves the link
+  // through its normal App Links / "Open by default" verification for the
+  // web.facebook.com host — so it opens whichever app the user has actually
+  // set as default (official Facebook, Facebook Lite, another handler, or
+  // the browser if nothing is set as default), rather than forcing Lite.
+  function toFacebookIntentLink(url){
     // url is already the cleaned core link by the time it reaches here
     // (stripped of tracking params in processLinks), but strip again
     // defensively in case this is ever called with a raw value.
@@ -332,7 +336,7 @@
       hostAndPath = cleanUrl.replace(/^https?:\/\//i, '');
     }
     return 'intent://' + hostAndPath +
-      '#Intent;package=com.facebook.lite;scheme=https;end';
+      '#Intent;scheme=https;end';
   }
 
   // Matches a URL (with or without protocol) optionally followed by an
@@ -407,7 +411,7 @@
       const li = document.createElement('li');
 
       const a = document.createElement('a');
-      a.href = toFacebookLiteIntentLink(item.url);
+      a.href = toFacebookIntentLink(item.url);
       a.textContent = item.url;
       a.rel = 'noopener noreferrer';
       a.dataset.index = String(index);
