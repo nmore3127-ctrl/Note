@@ -256,17 +256,80 @@
     return clean;
   }
 
+  // Known Facebook tracking/telemetry query params that carry no meaning
+  // for the link's destination and can break the native intent handler if
+  // left in place.
+  const FB_TRACKING_PARAMS = new Set([
+    'mibextid','fbclid','sfnsn','extid','ref','ref_component','ref_page',
+    'source','hrc','refid','notif_id','notif_t','_rdc','_rdr','eav',
+    'paipv','anchor_component','surface','if_id','hc_ref','rdid'
+  ]);
+
+  // Strips tracking junk (?mibextid=..., &sfnsn=mo, fbclid, __tn__/__cft__
+  // telemetry keys, hash fragments, etc.) from ANY Facebook link variant —
+  // facebook.com, www.facebook.com, m.facebook.com, web.facebook.com,
+  // fb.watch, /share/r/..., /reel/..., /watch/... — while carefully keeping
+  // any query param that's actually part of the link's identity (e.g. the
+  // "v" param on web.facebook.com/watch/?v=12345, which points at the
+  // actual video and is NOT tracking noise). Tracking params left in place
+  // are a common cause of the native intent silently failing to open the
+  // correct Reel/Post.
+  //
+  // It also normalizes the host: www.facebook.com and m.facebook.com are
+  // rewritten to web.facebook.com, so the link shown in the list and the
+  // intent link generated from it both consistently use web.facebook.com
+  // regardless of which host variant the user originally pasted.
+  function stripTrackingParams(rawUrl){
+    const webUrl = toCleanWebUrl(rawUrl);
+    try{
+      const u = new URL(webUrl);
+      let path = u.pathname;
+      // Normalize a single trailing slash away (but keep a bare "/")
+      if(path.length > 1 && path.endsWith('/')){
+        path = path.slice(0, -1);
+      }
+      const params = new URLSearchParams(u.search);
+      Array.from(params.keys()).forEach(key => {
+        // Strip explicitly known tracking keys, plus any Facebook internal
+        // telemetry key (they all start with a double underscore, e.g.
+        // __tn__, __cft__[0], __xts__).
+        if(FB_TRACKING_PARAMS.has(key) || key.startsWith('__')){
+          params.delete(key);
+        }
+      });
+      const cleanedQuery = params.toString();
+      const search = cleanedQuery ? '?' + cleanedQuery : '';
+
+      // Rewrite www.facebook.com / m.facebook.com -> web.facebook.com
+      let host = u.host;
+      if(/^(www|m)\.facebook\.com$/i.test(host)){
+        host = 'web.facebook.com';
+      }
+
+      // Hash fragments on Facebook links are always tracking/session noise
+      // and are intentionally dropped.
+      return u.protocol + '//' + host + path + search;
+    }catch(e){
+      // Manual fallback for malformed pastes that URL() can't parse
+      return webUrl.split('#')[0]
+        .replace(/^(https?:\/\/)(www|m)\.facebook\.com/i, '$1web.facebook.com');
+    }
+  }
+
   // Build an Android intent:// deep link that opens the link directly inside
   // the Facebook Lite app (com.facebook.lite) for that specific Reel/Post.
   // Format: intent://[CLEAN_URL]#Intent;package=com.facebook.lite;scheme=https;end
   function toFacebookLiteIntentLink(url){
-    const webUrl = toCleanWebUrl(url);
+    // url is already the cleaned core link by the time it reaches here
+    // (stripped of tracking params in processLinks), but strip again
+    // defensively in case this is ever called with a raw value.
+    const cleanUrl = stripTrackingParams(url);
     let hostAndPath;
     try{
-      const u = new URL(webUrl);
+      const u = new URL(cleanUrl);
       hostAndPath = u.host + u.pathname + u.search;
     }catch(e){
-      hostAndPath = webUrl.replace(/^https?:\/\//i, '');
+      hostAndPath = cleanUrl.replace(/^https?:\/\//i, '');
     }
     return 'intent://' + hostAndPath +
       '#Intent;package=com.facebook.lite;scheme=https;end';
@@ -280,22 +343,38 @@
   //   "1. https://facebook.com/reel/123 (Clicks: 5)"
   // It also matches bare URLs separated only by commas or newlines with no
   // click info at all, so raw pasted lists keep working exactly as before.
+  // The path/query segment is captured broadly (letters, digits, and the
+  // usual URL punctuation including "?", "&", "=", "%") so it works across
+  // every Facebook link shape: /share/r/..., /reel/..., /watch/..., fb.watch
+  // short links, m.facebook.com, web.facebook.com, and tracking-param-heavy
+  // share links alike — the junk is stripped out afterwards, not up front.
   const URL_WITH_CLICKS_REGEX =
-    /((?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}(?:\/[^\s,()]*)?)\s*(?:[-(]\s*(?:ক্লিক|Clicks?)\s*[:：]?\s*(\d+)\s*(?:বার)?\)?)?/gi;
+    /((?:https?:\/\/)?(?:www\.|m\.|web\.)?[a-zA-Z0-9\-.]+\.[a-zA-Z]{2,}(?:\/[a-zA-Z0-9\-._~%/]*)?(?:\?[a-zA-Z0-9\-._~%&=]*)?)\s*(?:[-(]\s*(?:ক্লিক|Clicks?)\s*[:：]?\s*(\d+)\s*(?:বার)?\)?)?/gi;
 
   // Scans the raw textarea content for every URL it can find, along with an
   // optional click count sitting right next to it. Works regardless of
-  // whether entries are separated by commas, newlines, or numbered lines.
+  // whether entries are separated by commas, newlines, or numbered lines,
+  // and regardless of which Facebook link format or tracking params are
+  // attached — every match is normalized through stripTrackingParams so
+  // the same Reel pasted twice (once clean, once with ?mibextid=...)
+  // dedupes correctly and always builds a working intent link.
   function processLinks(raw){
-    const found = new Map(); // url -> parsedClicks (number) | null
+    const found = new Map(); // cleanUrl -> parsedClicks (number) | null
     let match;
     URL_WITH_CLICKS_REGEX.lastIndex = 0;
     while((match = URL_WITH_CLICKS_REGEX.exec(raw)) !== null){
-      let url = match[1].trim().replace(/[),.]+$/, '');
+      let rawMatch = match[1].trim().replace(/[),.]+$/, '');
+      if(!rawMatch) continue;
+      const url = stripTrackingParams(rawMatch);
       if(!url) continue;
       const clicksStr = match[2];
       const parsedClicks = clicksStr !== undefined ? parseInt(clicksStr, 10) : null;
-      found.set(url, (parsedClicks !== null && !isNaN(parsedClicks)) ? parsedClicks : null);
+      const finalClicks = (parsedClicks !== null && !isNaN(parsedClicks)) ? parsedClicks : null;
+      const existing = found.has(url) ? found.get(url) : undefined;
+      // If this URL was already seen, keep whichever occurrence actually
+      // carried a click count rather than letting a later bare duplicate
+      // wipe out a previously parsed count.
+      found.set(url, finalClicks !== null ? finalClicks : (existing !== undefined ? existing : null));
     }
     return Array.from(found.entries()).map(([url, parsedClicks]) => ({ url, parsedClicks }));
   }
