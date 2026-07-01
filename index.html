@@ -12,9 +12,12 @@
     --border:#2a2f3a;
     --accent:#1877f2;
     --accent-hover:#3b8ef2;
+    --green:#1fae5c;
+    --green-hover:#25c96a;
     --text:#e8eaed;
     --text-dim:#9aa0a8;
     --danger:#e0245e;
+    --visited:#888;
   }
   *{box-sizing:border-box;}
   html,body{
@@ -96,17 +99,6 @@
     color:#fff;
   }
   #saveBtn:hover{ background:var(--accent-hover); }
-  #pasteBtn{
-    background:var(--panel-2);
-    color:var(--text);
-    border:1px solid var(--border);
-    flex:0 0 auto;
-    min-width:170px;
-  }
-  #pasteBtn:hover{
-    border-color:var(--accent);
-    color:var(--accent-hover);
-  }
   #clearBtn{
     background:transparent;
     color:var(--danger);
@@ -123,11 +115,37 @@
     min-height:1.1em;
     margin-top:8px;
   }
-  .list-card h2{
+  .hint{
+    font-size:0.78rem;
+    color:var(--text-dim);
+    margin-top:8px;
+    line-height:1.4;
+  }
+  .list-card .top-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom:10px;
+    flex-wrap:wrap;
+  }
+  .list-card .top-row h2{
+    margin:0;
     font-size:1rem;
-    margin:0 0 10px 0;
     color:var(--text-dim);
     font-weight:600;
+  }
+  #copyBtn{
+    flex:0 0 auto;
+    min-width:0;
+    padding:9px 16px;
+    font-size:0.85rem;
+    background:var(--green);
+    color:#fff;
+    border:none;
+  }
+  #copyBtn:hover{
+    background:var(--green-hover);
   }
   ol{
     margin:0;
@@ -157,8 +175,9 @@
   ol li a:hover{
     text-decoration:underline;
   }
-  ol li a.visited{
-    color:#777;
+  ol li a.clicked{
+    color:var(--visited);
+    text-decoration:line-through;
   }
   .click-count{
     flex:0 0 auto;
@@ -169,29 +188,6 @@
     border-radius:6px;
     padding:2px 7px;
     white-space:nowrap;
-  }
-  .list-card .top-row{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:10px;
-    margin-bottom:10px;
-  }
-  .list-card .top-row h2{
-    margin:0;
-  }
-  #copyBtn{
-    flex:0 0 auto;
-    min-width:0;
-    padding:8px 14px;
-    font-size:0.82rem;
-    background:var(--panel-2);
-    color:var(--text);
-    border:1px solid var(--border);
-  }
-  #copyBtn:hover{
-    border-color:var(--accent);
-    color:var(--accent-hover);
   }
   .empty-state{
     color:var(--text-dim);
@@ -212,37 +208,36 @@
 
   <header>
     <h1>🎬 Reels Notepad</h1>
-    <p>Paste comma-separated Facebook Reels links, format them into a numbered list with click tracking, and they'll auto-save.</p>
+    <p>Type or paste comma-separated Facebook Reels links, then format them into a tracked, numbered list.</p>
   </header>
 
   <div class="card">
-    <textarea id="inputArea" placeholder="Paste URLs separated by commas, e.g.&#10;https://www.facebook.com/reel/123456, https://www.facebook.com/reel/789012"></textarea>
+    <textarea id="inputArea" placeholder="Tap here — your keyboard's paste suggestion bar will let you drop in copied links, e.g.&#10;https://www.facebook.com/reel/123456, https://www.facebook.com/reel/789012" autofocus></textarea>
     <div class="btn-row">
-      <button id="pasteBtn" type="button">📋 Paste from Clipboard</button>
       <button id="saveBtn">Format &amp; Save</button>
       <button id="clearBtn">Clear All</button>
     </div>
     <div class="status" id="statusMsg"></div>
+    <div class="hint">Tip: tap inside the box, then use your keyboard's own "Paste" suggestion — no browser clipboard permission needed.</div>
   </div>
 
   <div class="card list-card">
     <div class="top-row">
       <h2>Saved Links</h2>
-      <button id="copyBtn">Copy Formatted Content</button>
+      <button id="copyBtn">Copy All Links</button>
     </div>
     <div id="listContainer">
       <div class="empty-state">No links saved yet.</div>
     </div>
   </div>
 
-  <footer>Links use Android intent:// URLs to open each Reel directly in Facebook Lite, with a browser fallback if it's not installed.</footer>
+  <footer>Links use Android intent:// URLs to open each Reel directly in Facebook Lite.</footer>
 </div>
 
 <script>
 (function(){
   const STORAGE_KEY = 'reelsNotepad.savedUrls';
   const inputArea = document.getElementById('inputArea');
-  const pasteBtn = document.getElementById('pasteBtn');
   const saveBtn = document.getElementById('saveBtn');
   const clearBtn = document.getElementById('clearBtn');
   const copyBtn = document.getElementById('copyBtn');
@@ -261,24 +256,20 @@
     return clean;
   }
 
-  // Build an Android intent:// deep link that forces the link to open
-  // inside the Facebook Lite app (com.facebook.lite) for that specific
-  // Reel/Post, falling back to the normal web URL if Lite isn't installed.
+  // Build an Android intent:// deep link that opens the link directly inside
+  // the Facebook Lite app (com.facebook.lite) for that specific Reel/Post.
+  // Format: intent://[CLEAN_URL]#Intent;package=com.facebook.lite;scheme=https;end
   function toFacebookLiteIntentLink(url){
     const webUrl = toCleanWebUrl(url);
     let hostAndPath;
     try{
       const u = new URL(webUrl);
-      // intent:// expects the scheme stripped off, e.g. facebook.com/share/r/XXXX
       hostAndPath = u.host + u.pathname + u.search;
     }catch(e){
-      // If parsing fails, strip the protocol manually as a fallback
       hostAndPath = webUrl.replace(/^https?:\/\//i, '');
     }
-    const fallback = encodeURIComponent(webUrl);
     return 'intent://' + hostAndPath +
-      '#Intent;package=com.facebook.lite;scheme=https;' +
-      'S.browser_fallback_url=' + fallback + ';end';
+      '#Intent;package=com.facebook.lite;scheme=https;end';
   }
 
   function parseInputToUrls(raw){
@@ -289,7 +280,7 @@
   }
 
   // Merge freshly parsed URLs with any existing click/visited data so that
-  // re-formatting the same list (e.g. after an edit) doesn't reset counters.
+  // re-formatting the same list doesn't reset counters.
   function buildItemsFromUrls(urls, previousItems){
     const prevByUrl = new Map((previousItems || []).map(item => [item.url, item]));
     return urls.map(url => {
@@ -316,20 +307,19 @@
       a.href = toFacebookLiteIntentLink(item.url);
       a.textContent = item.url;
       a.rel = 'noopener noreferrer';
-      a.dataset.webUrl = toCleanWebUrl(item.url);
       a.dataset.index = String(index);
-      if(item.visited) a.classList.add('visited');
+      if(item.visited) a.classList.add('clicked');
 
       const counter = document.createElement('span');
       counter.className = 'click-count';
-      counter.textContent = `[Clicks: ${item.clicks}]`;
+      counter.textContent = `ক্লিক: ${item.clicks} বার`;
 
       a.addEventListener('click', () => {
         item.clicks += 1;
         item.visited = true;
-        a.classList.add('visited');
-        counter.textContent = `[Clicks: ${item.clicks}]`;
-        saveUrls(currentItems);
+        a.classList.add('clicked');
+        counter.textContent = `ক্লিক: ${item.clicks} বার`;
+        saveItems(currentItems);
       });
 
       li.appendChild(a);
@@ -346,7 +336,7 @@
       if(!raw) return [];
       const parsed = JSON.parse(raw);
       if(!Array.isArray(parsed)) return [];
-      // Migrate legacy format (plain array of URL strings) to object format
+      // Migrate legacy plain-string-array format if present
       return parsed.map(entry => {
         if(typeof entry === 'string'){
           return { url: entry, clicks: 0, visited: false };
@@ -363,7 +353,7 @@
     }
   }
 
-  function saveUrls(items){
+  function saveItems(items){
     try{
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
       return true;
@@ -383,66 +373,15 @@
     }
   }
 
-  // Attempts to paste clipboard content into the textarea using multiple
-  // strategies, since navigator.clipboard.readText() frequently throws
-  // permission errors inside Android WebViews (no Permissions API / no
-  // secure-context clipboard-read grant available to the embedded page).
-  async function pasteFromClipboard(){
-    // Strategy 1: modern async Clipboard API (works in real Chrome/Edge/etc,
-    // and in WebViews where the host app has granted clipboard access).
-    if(navigator.clipboard && navigator.clipboard.readText){
-      try{
-        const text = await navigator.clipboard.readText();
-        if(text && text.trim()){
-          inputArea.value = text;
-          inputArea.focus();
-          showStatus('Pasted from clipboard.', false);
-          return;
-        }
-      }catch(e){
-        console.warn('navigator.clipboard.readText failed, trying fallback', e);
-        // fall through to strategy 2
-      }
-    }
-
-    // Strategy 2: legacy document.execCommand('paste'). This works in many
-    // Android System WebViews without ever hitting the browser Permissions
-    // API, because it goes through the OS input connection directly instead
-    // of the web Clipboard permission model.
-    inputArea.value = '';
-    inputArea.focus();
-    let execSucceeded = false;
-    try{
-      execSucceeded = document.execCommand('paste');
-    }catch(e){
-      console.warn('document.execCommand("paste") failed', e);
-    }
-    if(execSucceeded && inputArea.value.trim()){
-      showStatus('Pasted from clipboard.', false);
-      return;
-    }
-
-    // Strategy 3: no programmatic path worked (this is expected on some
-    // hardened WebViews — JS is not allowed to silently read the clipboard
-    // for security reasons). Put the cursor in the textarea and select any
-    // existing content so a single tap brings up Android's native "Paste"
-    // popup, which the user can then tap themselves.
-    inputArea.focus();
-    inputArea.select();
-    showStatus('Tap inside the box and choose "Paste" from the popup.', true);
-  }
-
-  pasteBtn.addEventListener('click', pasteFromClipboard);
-
   saveBtn.addEventListener('click', () => {
     const raw = inputArea.value;
     const urls = parseInputToUrls(raw);
     if(urls.length === 0){
-      showStatus('Please paste at least one URL first.', true);
+      showStatus('Please enter at least one URL first.', true);
       return;
     }
     const items = buildItemsFromUrls(urls, currentItems);
-    const ok = saveUrls(items);
+    const ok = saveItems(items);
     renderList(items);
     if(ok){
       showStatus(`Saved ${items.length} link${items.length !== 1 ? 's' : ''}.`, false);
@@ -457,21 +396,32 @@
     localStorage.removeItem(STORAGE_KEY);
     renderList([]);
     showStatus('Cleared.', false);
+    inputArea.focus();
   });
 
+  // Bulk copy: builds a structured plain-text list (URL + click count) and
+  // writes it to the clipboard. This is a WRITE operation, which browsers
+  // and Android WebViews treat far more permissively than clipboard reads,
+  // but we still layer in a manual fallback for older/stricter WebViews.
   copyBtn.addEventListener('click', async () => {
     if(!currentItems.length){
       showStatus('Nothing to copy yet.', true);
       return;
     }
     const text = currentItems
-      .map((item, i) => `${i + 1}. ${item.url} [Clicks: ${item.clicks}]`)
+      .map((item, i) => `${i + 1}. ${item.url} - ক্লিক: ${item.clicks} বার`)
       .join('\n');
-    try{
-      await navigator.clipboard.writeText(text);
-      showStatus('Copied formatted list to clipboard.', false);
-    }catch(e){
-      // Fallback for browsers/contexts without Clipboard API access
+
+    let copied = false;
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      try{
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }catch(e){
+        console.warn('navigator.clipboard.writeText failed, trying fallback', e);
+      }
+    }
+    if(!copied){
       try{
         const ta = document.createElement('textarea');
         ta.value = text;
@@ -480,23 +430,29 @@
         document.body.appendChild(ta);
         ta.focus();
         ta.select();
-        document.execCommand('copy');
+        copied = document.execCommand('copy');
         document.body.removeChild(ta);
-        showStatus('Copied formatted list to clipboard.', false);
       }catch(e2){
-        console.error('Copy failed', e2);
-        showStatus('Could not copy to clipboard.', true);
+        console.error('Fallback copy failed', e2);
       }
+    }
+    if(copied){
+      showStatus('Copied all links to clipboard.', false);
+    }else{
+      showStatus('Could not copy automatically — long-press the list to copy manually.', true);
     }
   });
 
-  // Restore on page load
-  window.addEventListener('DOMContentLoaded', () => {
+  // Restore saved data and auto-focus the textarea so the mobile keyboard
+  // (with its native paste suggestion bar) opens immediately — no
+  // navigator.clipboard or document.execCommand('paste') calls involved.
+  window.addEventListener('load', () => {
     const saved = loadSaved();
     if(saved.length){
       inputArea.value = saved.map(item => item.url).join(', ');
       renderList(saved);
     }
+    inputArea.focus();
   });
 })();
 </script>
