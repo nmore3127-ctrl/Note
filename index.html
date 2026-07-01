@@ -131,14 +131,56 @@
     border-radius:8px;
     padding:10px 12px;
     word-break:break-all;
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:8px;
   }
   ol li a{
     color:var(--accent-hover);
     text-decoration:none;
     font-size:0.9rem;
+    flex:1 1 auto;
+    min-width:0;
   }
   ol li a:hover{
     text-decoration:underline;
+  }
+  ol li a.visited{
+    color:#777;
+  }
+  .click-count{
+    flex:0 0 auto;
+    font-size:0.78rem;
+    color:var(--text-dim);
+    background:var(--bg);
+    border:1px solid var(--border);
+    border-radius:6px;
+    padding:2px 7px;
+    white-space:nowrap;
+  }
+  .list-card .top-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom:10px;
+  }
+  .list-card .top-row h2{
+    margin:0;
+  }
+  #copyBtn{
+    flex:0 0 auto;
+    min-width:0;
+    padding:8px 14px;
+    font-size:0.82rem;
+    background:var(--panel-2);
+    color:var(--text);
+    border:1px solid var(--border);
+  }
+  #copyBtn:hover{
+    border-color:var(--accent);
+    color:var(--accent-hover);
   }
   .empty-state{
     color:var(--text-dim);
@@ -159,7 +201,7 @@
 
   <header>
     <h1>🎬 Reels Notepad</h1>
-    <p>Paste comma-separated Facebook Reels links, format them into a numbered list of native app links, and they'll auto-save.</p>
+    <p>Paste comma-separated Facebook Reels links, format them into a numbered list with click tracking, and they'll auto-save.</p>
   </header>
 
   <div class="card">
@@ -172,7 +214,10 @@
   </div>
 
   <div class="card list-card">
-    <h2>Saved Links</h2>
+    <div class="top-row">
+      <h2>Saved Links</h2>
+      <button id="copyBtn">Copy Formatted Content</button>
+    </div>
     <div id="listContainer">
       <div class="empty-state">No links saved yet.</div>
     </div>
@@ -187,8 +232,12 @@
   const inputArea = document.getElementById('inputArea');
   const saveBtn = document.getElementById('saveBtn');
   const clearBtn = document.getElementById('clearBtn');
+  const copyBtn = document.getElementById('copyBtn');
   const listContainer = document.getElementById('listContainer');
   const statusMsg = document.getElementById('statusMsg');
+
+  // In-memory copy of the currently rendered items: [{ url, clicks, visited }]
+  let currentItems = [];
 
   // Normalize a raw string into a proper https:// web URL
   function toCleanWebUrl(url){
@@ -226,22 +275,52 @@
       .filter(s => s.length > 0);
   }
 
-  function renderList(urls){
-    if(!urls || urls.length === 0){
+  // Merge freshly parsed URLs with any existing click/visited data so that
+  // re-formatting the same list (e.g. after an edit) doesn't reset counters.
+  function buildItemsFromUrls(urls, previousItems){
+    const prevByUrl = new Map((previousItems || []).map(item => [item.url, item]));
+    return urls.map(url => {
+      const prev = prevByUrl.get(url);
+      return {
+        url,
+        clicks: prev ? prev.clicks : 0,
+        visited: prev ? prev.visited : false
+      };
+    });
+  }
+
+  function renderList(items){
+    currentItems = items || [];
+    if(!items || items.length === 0){
       listContainer.innerHTML = '<div class="empty-state">No links saved yet.</div>';
       return;
     }
     const ol = document.createElement('ol');
-    urls.forEach(url => {
+    items.forEach((item, index) => {
       const li = document.createElement('li');
+
       const a = document.createElement('a');
-      a.href = toFacebookLiteIntentLink(url);
-      a.textContent = url;
+      a.href = toFacebookLiteIntentLink(item.url);
+      a.textContent = item.url;
       a.rel = 'noopener noreferrer';
-      // Keep the plain web URL handy too (used as the intent's own fallback,
-      // and available here in case you want a manual "open in browser" option)
-      a.dataset.webUrl = toCleanWebUrl(url);
+      a.dataset.webUrl = toCleanWebUrl(item.url);
+      a.dataset.index = String(index);
+      if(item.visited) a.classList.add('visited');
+
+      const counter = document.createElement('span');
+      counter.className = 'click-count';
+      counter.textContent = `[Clicks: ${item.clicks}]`;
+
+      a.addEventListener('click', () => {
+        item.clicks += 1;
+        item.visited = true;
+        a.classList.add('visited');
+        counter.textContent = `[Clicks: ${item.clicks}]`;
+        saveUrls(currentItems);
+      });
+
       li.appendChild(a);
+      li.appendChild(counter);
       ol.appendChild(li);
     });
     listContainer.innerHTML = '';
@@ -253,16 +332,27 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if(!raw) return [];
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      if(!Array.isArray(parsed)) return [];
+      // Migrate legacy format (plain array of URL strings) to object format
+      return parsed.map(entry => {
+        if(typeof entry === 'string'){
+          return { url: entry, clicks: 0, visited: false };
+        }
+        return {
+          url: entry.url,
+          clicks: typeof entry.clicks === 'number' ? entry.clicks : 0,
+          visited: !!entry.visited
+        };
+      });
     }catch(e){
       console.error('Failed to load saved urls', e);
       return [];
     }
   }
 
-  function saveUrls(urls){
+  function saveUrls(items){
     try{
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(urls));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
       return true;
     }catch(e){
       console.error('Failed to save urls', e);
@@ -287,10 +377,11 @@
       showStatus('Please paste at least one URL first.', true);
       return;
     }
-    const ok = saveUrls(urls);
-    renderList(urls);
+    const items = buildItemsFromUrls(urls, currentItems);
+    const ok = saveUrls(items);
+    renderList(items);
     if(ok){
-      showStatus(`Saved ${urls.length} link${urls.length !== 1 ? 's' : ''}.`, false);
+      showStatus(`Saved ${items.length} link${items.length !== 1 ? 's' : ''}.`, false);
     }else{
       showStatus('Could not save to local storage.', true);
     }
@@ -304,11 +395,42 @@
     showStatus('Cleared.', false);
   });
 
+  copyBtn.addEventListener('click', async () => {
+    if(!currentItems.length){
+      showStatus('Nothing to copy yet.', true);
+      return;
+    }
+    const text = currentItems
+      .map((item, i) => `${i + 1}. ${item.url} [Clicks: ${item.clicks}]`)
+      .join('\n');
+    try{
+      await navigator.clipboard.writeText(text);
+      showStatus('Copied formatted list to clipboard.', false);
+    }catch(e){
+      // Fallback for browsers/contexts without Clipboard API access
+      try{
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showStatus('Copied formatted list to clipboard.', false);
+      }catch(e2){
+        console.error('Copy failed', e2);
+        showStatus('Could not copy to clipboard.', true);
+      }
+    }
+  });
+
   // Restore on page load
   window.addEventListener('DOMContentLoaded', () => {
     const saved = loadSaved();
     if(saved.length){
-      inputArea.value = saved.join(', ');
+      inputArea.value = saved.map(item => item.url).join(', ');
       renderList(saved);
     }
   });
